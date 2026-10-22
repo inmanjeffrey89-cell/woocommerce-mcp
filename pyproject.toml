@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "woocommerce-mcp"
+dynamic = ["version"]
+description = "MCP server that gives Claude read access to a WooCommerce store's orders, products and stock, with optional writes"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Jeffrey Inman" }]
+requires-python = ">=3.10"
+dependencies = ["mcp>=2,<3", "httpx>=0.27,<1"]
+keywords = ["mcp", "model-context-protocol", "woocommerce", "wordpress", "claude"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Office/Business",
+]
+
+[project.urls]
+Repository = "https://github.com/inmanjeffrey89-cell/woocommerce-mcp"
+Issues = "https://github.com/inmanjeffrey89-cell/woocommerce-mcp/issues"
+
+[project.scripts]
+woocommerce-mcp = "woocommerce_mcp.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "respx>=0.22", "ruff>=0.8"]
+
+[tool.hatch.version]
+path = "woocommerce_mcp/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["woocommerce_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["woocommerce_mcp", "tests", "scripts", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::ResourceWarning"]
