@@ -278,6 +278,11 @@ async def test_low_stock_report_with_variations(api, call):
     ]
     assert result["items"][0]["parent_id"] == 4
     assert "parent_id" not in result["items"][1]
+    # Card has no stock quantity, so it is reported as untracked instead of low. Tee's own stock
+    # lives in its variations, so the parent is not counted.
+    assert result["untracked_count"] == 1
+    assert [(row["id"], row["name"]) for row in result["untracked_examples"]] == [(5, "Card")]
+    assert result["variable_products_unchecked"] == 0
 
 
 async def test_low_stock_report_skips_variations_by_default(api, call):
@@ -288,7 +293,22 @@ async def test_low_stock_report_skips_variations_by_default(api, call):
     result = await call("low_stock_report")
     assert result["threshold"] == 5
     assert result["count"] == 0
+    assert result["untracked_count"] == 0
+    assert result["variable_products_unchecked"] == 1
     assert not variations.called
+
+
+async def test_low_stock_report_lists_untracked_variations_and_caps_examples(api, call):
+    plain = [product(id=i, name=f"Item {i}", manage_stock=False, stock_quantity=None) for i in range(1, 12)]
+    tee = product(id=20, name="Tee", type="variable", manage_stock=False, stock_quantity=None)
+    api.get("/products").respond(200, json=[*plain, tee])
+    untracked_variation = {**variation(21, "M", 0), "manage_stock": False, "stock_quantity": None}
+    api.get("/products/20/variations").respond(200, json=[untracked_variation, variation(22, "L", 3)])
+    result = await call("low_stock_report", include_variations=True)
+    assert [(row["id"], row["stock_quantity"]) for row in result["items"]] == [(22, 3)]
+    assert result["untracked_count"] == 12
+    assert len(result["untracked_examples"]) == 10
+    assert result["variable_products_unchecked"] == 0
 
 
 async def test_sales_summary_walks_every_page(api, call):

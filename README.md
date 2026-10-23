@@ -125,7 +125,8 @@ Bad keys, missing orders, a store that is not reachable, rate limits and non-JSO
 ## Limits worth knowing
 
 - `sales_summary` and `low_stock_report` walk the whole result set 100 items at a time. They stop at 5,000 items and set `truncated: true` in the result when that happens.
-- `low_stock_report` checks published products. Pass `include_variations: true` to also check each variable product's variations; that costs one request per variable product.
+- `low_stock_report` checks published products. Pass `include_variations: true` to also check each variable product's variations; that costs one request per variable product. With it off, `variable_products_unchecked` says how many variable products were skipped.
+- Products and variations with stock management off have no quantity to compare, so they never count as low. They show up in `untracked_count`, with up to 10 of them in `untracked_examples`, so a "nothing is low" answer can say what it couldn't check.
 - The `woocommerce://store` resource reads `system_status`, which WooCommerce only shows to users who can manage the store. With a more limited key you still get the URL and the writes flag.
 
 ## Development

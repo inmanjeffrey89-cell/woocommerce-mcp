@@ -192,15 +192,33 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
     async def low_stock_report(threshold: int = 5, include_variations: bool = False) -> Json:
         """Published products whose tracked stock is at or below the threshold, plus anything marked
         out of stock. Walks the whole catalog. Set include_variations to also check each variable
-        product's variations, at the cost of one extra request per variable product."""
+        product's variations, at the cost of one extra request per variable product.
+
+        Items with no stock quantity to compare (stock management off) are never counted as low.
+        They are counted in untracked_count instead, with up to 10 of them in untracked_examples.
+        variable_products_unchecked is how many variable products had their variations skipped
+        because include_variations was off."""
         products, truncated = await client.get_all("products", {"status": "publish"})
         low: list[Json] = []
+        untracked: list[Json] = []
+        unchecked = 0
         for product in products:
+            is_variable = product.get("type") == "variable"
             if _is_low(product, threshold):
                 low.append(_stock_row(product))
-            if include_variations and product.get("type") == "variable":
-                variations, _ = await client.get_all(f"products/{product['id']}/variations", {})
-                low.extend(_stock_row(v, product) for v in variations if _is_low(v, threshold))
+            elif not is_variable and _is_untracked(product):
+                untracked.append(_stock_row(product))
+            if not is_variable:
+                continue
+            if not include_variations:
+                unchecked += 1
+                continue
+            variations, _ = await client.get_all(f"products/{product['id']}/variations", {})
+            for v in variations:
+                if _is_low(v, threshold):
+                    low.append(_stock_row(v, product))
+                elif _is_untracked(v):
+                    untracked.append(_stock_row(v, product))
         low.sort(key=lambda row: (row["stock_quantity"] is None, row["stock_quantity"] or 0))
         return {
             "threshold": threshold,
@@ -208,6 +226,9 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
             "truncated": truncated,
             "count": len(low),
             "items": low,
+            "untracked_count": len(untracked),
+            "untracked_examples": untracked[:10],
+            "variable_products_unchecked": unchecked,
         }
 
     @mcp.tool(annotations=read_only)
@@ -465,6 +486,13 @@ def _is_low(item: Json, threshold: int) -> bool:
         return True
     quantity = item.get("stock_quantity")
     return bool(item.get("manage_stock")) and quantity is not None and quantity <= threshold
+
+
+def _is_untracked(item: Json) -> bool:
+    """In stock as far as WooCommerce says, but with no quantity the threshold can be checked against."""
+    if item.get("stock_status") == "outofstock":
+        return False
+    return not item.get("manage_stock") or item.get("stock_quantity") is None
 
 
 def _stock_row(item: Json, parent: Json | None = None) -> Json:
