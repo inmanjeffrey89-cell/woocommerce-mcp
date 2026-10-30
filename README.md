@@ -108,6 +108,8 @@ Write tools (need `WC_ALLOW_WRITES=true`):
 
 With writes off, both tools answer with a short message saying writes are disabled and do nothing else.
 
+Every tool declares all four MCP tool hints (readOnlyHint, destructiveHint, idempotentHint, openWorldHint), so a client that checks them can tell the seven read tools from the two that change the store. `update_order_status` is marked open-world because a status change can make WooCommerce email the customer.
+
 There is also one resource, `woocommerce://store`, with the store URL, WooCommerce and WordPress versions, currency, timezone and whether writes are enabled.
 
 Money values are passed through as strings exactly as WooCommerce reports them, with the currency code alongside. Dates go in and come out in the store's timezone.

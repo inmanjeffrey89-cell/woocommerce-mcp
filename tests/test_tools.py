@@ -26,8 +26,12 @@ async def test_tool_catalog(server):
     assert set(tools) == ALL_TOOLS
     for name, tool in tools.items():
         assert tool.description, name
-        assert tool.annotations.read_only_hint is not name.startswith("update_"), name
+        hints = tool.annotations
+        for hint in ("read_only_hint", "destructive_hint", "idempotent_hint", "open_world_hint"):
+            assert isinstance(getattr(hints, hint), bool), (name, hint)
+        assert hints.read_only_hint is not name.startswith("update_"), name
     assert tools["update_order_status"].annotations.destructive_hint is True
+    assert tools["update_order_status"].annotations.open_world_hint is True
     assert tools["update_stock"].annotations.destructive_hint is False
 
 

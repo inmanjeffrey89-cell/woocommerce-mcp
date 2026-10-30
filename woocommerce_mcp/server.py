@@ -79,7 +79,6 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
         ),
         lifespan=close_client_on_exit,
     )
-    read_only = ToolAnnotations(read_only_hint=True)
 
     def require_writes(tool_name: str) -> None:
         if not settings.allow_writes:
@@ -99,7 +98,11 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
             raise ToolError(f"No product category matches {category!r}")
         return int(chosen[0]["id"])
 
-    @mcp.tool(annotations=read_only)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
     @_wc_errors_as_tool_errors
     async def list_orders(
         status: str | None = None,
@@ -127,13 +130,21 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
             "orders": [_order_summary(o) for o in page.items],
         }
 
-    @mcp.tool(annotations=read_only)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
     @_wc_errors_as_tool_errors
     async def get_order(order_id: int) -> Json:
         """One order in full: line items, addresses, totals, shipping, refunds and the customer note."""
         return _order_detail(await client.get(f"orders/{order_id}"))
 
-    @mcp.tool(annotations=read_only)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
     @_wc_errors_as_tool_errors
     async def list_products(
         search: str | None = None,
@@ -160,7 +171,11 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
             "products": [_product(p) for p in page.items],
         }
 
-    @mcp.tool(annotations=read_only)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
     @_wc_errors_as_tool_errors
     async def get_product(product_id: int) -> Json:
         """One product with price, stock and categories. For a variable product the variations are
@@ -172,7 +187,11 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
             result["variations"] = [_variation(v, product) for v in variations]
         return result
 
-    @mcp.tool(annotations=read_only)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
     @_wc_errors_as_tool_errors
     async def list_customers(search: str | None = None, limit: int = 20) -> Json:
         """Registered customers, optionally matching a name, email or username. Guest checkouts
@@ -187,7 +206,11 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
             "customers": [_customer(c) for c in page.items],
         }
 
-    @mcp.tool(annotations=read_only)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
     @_wc_errors_as_tool_errors
     async def low_stock_report(threshold: int = 5, include_variations: bool = False) -> Json:
         """Published products whose tracked stock is at or below the threshold, plus anything marked
@@ -231,7 +254,11 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
             "variable_products_unchecked": unchecked,
         }
 
-    @mcp.tool(annotations=read_only)
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
     @_wc_errors_as_tool_errors
     async def sales_summary(
         after: str, before: str, status: str = "completed,processing", top: int = 10
@@ -278,7 +305,11 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
             "truncated": truncated,
         }
 
-    @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
     @_wc_errors_as_tool_errors
     async def update_stock(product_id: int, quantity: int, variation_id: int | None = None) -> Json:
         """Set a product's stock quantity and turn on stock management for it. Pass variation_id to
@@ -290,7 +321,12 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
         updated = await client.put(path, {"manage_stock": True, "stock_quantity": quantity})
         return _stock_row(updated, {"id": product_id} if variation_id is not None else None)
 
-    @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))
+    # open_world_hint: a status change can make WooCommerce email the customer.
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=True
+        )
+    )
     @_wc_errors_as_tool_errors
     async def update_order_status(order_id: int, status: str) -> Json:
         """Change an order's status (pending, processing, on-hold, completed, cancelled, refunded,
