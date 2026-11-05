@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 import httpx
 import pytest
@@ -15,6 +16,7 @@ ALL_TOOLS = {
     "get_product",
     "list_customers",
     "low_stock_report",
+    "restock_priority",
     "sales_summary",
     "update_stock",
     "update_order_status",
@@ -313,6 +315,116 @@ async def test_low_stock_report_lists_untracked_variations_and_caps_examples(api
     assert result["untracked_count"] == 12
     assert len(result["untracked_examples"]) == 10
     assert result["variable_products_unchecked"] == 0
+
+
+@pytest.fixture
+def today(monkeypatch):
+    monkeypatch.setattr("woocommerce_mcp.server._today", lambda: date(2026, 11, 5))
+
+
+async def test_restock_priority_ranks_by_days_of_cover(api, call, today):
+    orders = api.get("/orders").respond(
+        200,
+        json=[
+            order(
+                id=1,
+                items=[
+                    line_item(product_id=1, name="Mug", quantity=30, total="450.00"),
+                    line_item(product_id=2, name="Hat", quantity=3, total="30.00"),
+                    line_item(product_id=4, name="Pin", quantity=4, total="8.00"),
+                    line_item(product_id=5, name="Cap", quantity=2, total="20.00"),
+                ],
+            ),
+            order(
+                id=2,
+                items=[
+                    line_item(product_id=6, name="Tee - S", quantity=6, total="120.00", variation_id=61),
+                    line_item(product_id=6, name="Tee - M", quantity=15, total="300.00", variation_id=62),
+                    line_item(product_id=7, name="Bag - Red", quantity=3, total="60.00", variation_id=71),
+                    line_item(product_id=7, name="Bag - Blue", quantity=3, total="60.00", variation_id=72),
+                ],
+            ),
+        ],
+    )
+    api.get("/products").respond(
+        200,
+        json=[
+            product(id=1, name="Mug", stock_quantity=10),
+            product(id=2, name="Hat", stock_quantity=3),
+            product(id=3, name="Scarf", stock_quantity=50),
+            product(id=4, name="Pin", manage_stock=False, stock_quantity=None),
+            product(id=5, name="Cap", stock_quantity=0, stock_status="outofstock"),
+            product(id=6, name="Tee", type="variable", manage_stock=False, stock_quantity=None),
+            product(id=7, name="Bag", type="variable", stock_quantity=2),
+        ],
+    )
+    api.get("/products/6/variations").respond(200, json=[variation(61, "S", 1), variation(62, "M", 40)])
+    shared = [
+        {**variation(71, "Red", 2), "manage_stock": "parent"},
+        {**variation(72, "Blue", 2), "manage_stock": "parent"},
+    ]
+    api.get("/products/7/variations").respond(200, json=shared)
+
+    result = await call("restock_priority", include_variations=True)
+
+    params = orders.calls.last.request.url.params
+    assert params["after"] == "2026-10-06T00:00:00"
+    assert params["status"] == "completed,processing"
+    assert result["since"] == "2026-10-06T00:00:00"
+    assert result["orders_scanned"] == 2
+    assert result["products_scanned"] == 7
+    assert result["truncated"] is False
+    # Hat has only 3 left but sells one every ten days; Mug has 10 but sells one a day. Bag's
+    # stock is shared on the parent, so both variations' sales count against it.
+    assert [
+        (row["id"], row["stock_quantity"], row["units_sold"], row["per_day"], row["days_of_cover"])
+        for row in result["items"]
+    ] == [
+        (5, 0, 2, 0.07, 0.0),
+        (61, 1, 6, 0.2, 5.0),
+        (1, 10, 30, 1.0, 10.0),
+        (7, 2, 6, 0.2, 10.0),
+    ]
+    assert result["count"] == 4
+    assert result["items"][1]["name"] == "Tee (S)"
+    assert result["items"][1]["parent_id"] == 6
+    assert [(row["id"], row["units_sold"]) for row in result["untracked_selling_examples"]] == [(4, 4)]
+    assert result["untracked_selling_count"] == 1
+    assert result["variable_products_unchecked"] == 0
+
+
+async def test_restock_priority_skips_variations_by_default(api, call, today):
+    api.get("/orders").respond(
+        200,
+        json=[
+            order(
+                items=[
+                    line_item(product_id=6, name="Tee - S", quantity=9, total="180.00", variation_id=61),
+                    line_item(product_id=7, name="Bag - Red", quantity=6, total="120.00", variation_id=71),
+                ]
+            )
+        ],
+    )
+    api.get("/products").respond(
+        200,
+        json=[
+            product(id=6, name="Tee", type="variable", manage_stock=False, stock_quantity=None),
+            product(id=7, name="Bag", type="variable", stock_quantity=1),
+        ],
+    )
+    variations = api.get(path__regex=r"/products/\d+/variations").respond(200, json=[])
+    result = await call("restock_priority", days=7, cover_days=3)
+    assert not variations.called
+    assert result["since"] == "2026-10-29T00:00:00"
+    assert [(row["id"], row["units_sold"], row["days_of_cover"]) for row in result["items"]] == [(7, 6, 1.2)]
+    assert result["variable_products_unchecked"] == 1
+
+
+async def test_restock_priority_rejects_an_empty_window(api, call):
+    orders = api.get("/orders").respond(200, json=[])
+    with pytest.raises(ToolError, match="days must be at least 1"):
+        await call("restock_priority", days=0)
+    assert not orders.called
 
 
 async def test_sales_summary_walks_every_page(api, call):

@@ -41,6 +41,7 @@ async def run() -> int:
 
         await show(server, "list_customers", {"limit": 3})
         await show(server, "low_stock_report", {"threshold": 5})
+        await show(server, "restock_priority", {})
         await show(server, "sales_summary", {"after": month_ago.isoformat(), "before": today.isoformat()})
     return 0
 

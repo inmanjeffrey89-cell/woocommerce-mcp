@@ -10,6 +10,7 @@ Once the server is connected you can ask things like:
 
 - "What sold best in the last 30 days?"
 - "Which products are below 5 in stock?"
+- "What do I need to reorder first?"
 - "Show me the open orders from ann@example.com"
 - "Set the stock of SKU MUG-1 to 40" (only with writes enabled)
 
@@ -97,6 +98,7 @@ Read tools (always on):
 | `get_product` | One product; variable products come with their variations |
 | `list_customers` | Registered customers, searchable by name, email or username |
 | `low_stock_report` | Everything at or under a stock threshold, plus items marked out of stock |
+| `restock_priority` | What runs out first at the recent sales rate: units sold, sales per day and days of stock left, soonest first |
 | `sales_summary` | Order count, revenue, refunds, average order value and top sellers for a date range |
 
 Write tools (need `WC_ALLOW_WRITES=true`):
@@ -108,7 +110,7 @@ Write tools (need `WC_ALLOW_WRITES=true`):
 
 With writes off, both tools answer with a short message saying writes are disabled and do nothing else.
 
-Every tool declares all four MCP tool hints (readOnlyHint, destructiveHint, idempotentHint, openWorldHint), so a client that checks them can tell the seven read tools from the two that change the store. `update_order_status` is marked open-world because a status change can make WooCommerce email the customer.
+Every tool declares all four MCP tool hints (readOnlyHint, destructiveHint, idempotentHint, openWorldHint), so a client that checks them can tell the eight read tools from the two that change the store. `update_order_status` is marked open-world because a status change can make WooCommerce email the customer.
 
 There is also one resource, `woocommerce://store`, with the store URL, WooCommerce and WordPress versions, currency, timezone and whether writes are enabled.
 
@@ -126,9 +128,10 @@ Bad keys, missing orders, a store that is not reachable, rate limits and non-JSO
 
 ## Limits worth knowing
 
-- `sales_summary` and `low_stock_report` walk the whole result set 100 items at a time. They stop at 5,000 items and set `truncated: true` in the result when that happens.
+- `sales_summary`, `low_stock_report` and `restock_priority` walk the whole result set 100 items at a time. They stop at 5,000 items and set `truncated: true` in the result when that happens.
 - `low_stock_report` checks published products. Pass `include_variations: true` to also check each variable product's variations; that costs one request per variable product. With it off, `variable_products_unchecked` says how many variable products were skipped.
 - Products and variations with stock management off have no quantity to compare, so they never count as low. They show up in `untracked_count`, with up to 10 of them in `untracked_examples`, so a "nothing is low" answer can say what it couldn't check.
+- `restock_priority` counts completed and processing orders from the last 30 days by default (`days`, `status`) and lists items with under 14 days of stock left (`cover_days`). An item that sold nothing in the window is left out, even if it was out of stock the whole time, so run `low_stock_report` too. Variable products work as in `low_stock_report`; when stock is kept on the parent, every variation's sales count against it.
 - The `woocommerce://store` resource reads `system_status`, which WooCommerce only shows to users who can manage the store. With a more limited key you still get the URL and the writes flag.
 
 ## Development

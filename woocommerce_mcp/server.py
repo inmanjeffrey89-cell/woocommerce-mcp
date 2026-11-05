@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -260,6 +260,94 @@ def build_server(settings: Settings, client: WooCommerceClient) -> MCPServer:
         )
     )
     @_wc_errors_as_tool_errors
+    async def restock_priority(
+        days: int = 30,
+        cover_days: int = 14,
+        include_variations: bool = False,
+        status: str = "completed,processing",
+    ) -> Json:
+        """What runs out first at the rate it has been selling. Counts the units of each product
+        and variation sold in the last `days` days, divides the tracked stock by that daily rate,
+        and returns everything with fewer than `cover_days` days of stock left, soonest first.
+
+        A low quantity that barely sells is not listed; a big quantity that sells fast is. Items
+        that sold nothing in the window are left out, including ones that were out of stock the
+        whole time (low_stock_report lists those). Items that sold but have stock management off
+        are counted in untracked_selling_count, with up to 10 in untracked_selling_examples.
+        include_variations works as in low_stock_report."""
+        if days < 1:
+            raise ToolError("days must be at least 1")
+        if cover_days < 0:
+            raise ToolError("cover_days can't be negative")
+        since = f"{(_today() - timedelta(days=days)).isoformat()}T00:00:00"
+        orders, orders_truncated = await client.get_all("orders", {"after": since, "status": status})
+        # Products and variations share one id space, so a single counter holds both.
+        sold: Counter[Any] = Counter()
+        sold_under_product: Counter[Any] = Counter()
+        for order in orders:
+            for item in order.get("line_items", []):
+                quantity = int(item.get("quantity") or 0)
+                sold[item.get("variation_id") or item.get("product_id")] += quantity
+                sold_under_product[item.get("product_id")] += quantity
+
+        products, products_truncated = await client.get_all("products", {"status": "publish"})
+        rows: list[Json] = []
+        untracked: list[Json] = []
+        unchecked = 0
+
+        def consider(item: Json, units: int, parent: Json | None = None) -> None:
+            if units <= 0:
+                return
+            row = {**_stock_row(item, parent), "units_sold": units}
+            if _is_untracked(item):
+                untracked.append(row)
+                return
+            per_day = units / days
+            cover = max(item.get("stock_quantity") or 0, 0) / per_day
+            if cover < cover_days:
+                rows.append({**row, "per_day": round(per_day, 2), "days_of_cover": round(cover, 1)})
+
+        for product in products:
+            if product.get("type") != "variable":
+                consider(product, sold[product.get("id")])
+                continue
+            # A variable product either keeps one shared stock on the parent or lets each
+            # variation keep its own. Sales of variations with their own stock count only there.
+            own_stock_units = 0
+            if include_variations:
+                variations, _ = await client.get_all(f"products/{product['id']}/variations", {})
+                for v in variations:
+                    if v.get("manage_stock") == "parent":
+                        continue
+                    own_stock_units += sold[v.get("id")]
+                    consider(v, sold[v.get("id")], product)
+            elif product.get("manage_stock") is not True:
+                unchecked += 1
+            if product.get("manage_stock") is True:
+                consider(product, sold_under_product[product.get("id")] - own_stock_units)
+
+        rows.sort(key=lambda row: (row["days_of_cover"], -row["units_sold"]))
+        return {
+            "since": since,
+            "days": days,
+            "cover_days": cover_days,
+            "statuses": status,
+            "orders_scanned": len(orders),
+            "products_scanned": len(products),
+            "truncated": orders_truncated or products_truncated,
+            "count": len(rows),
+            "items": rows,
+            "untracked_selling_count": len(untracked),
+            "untracked_selling_examples": untracked[:10],
+            "variable_products_unchecked": unchecked,
+        }
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+        )
+    )
+    @_wc_errors_as_tool_errors
     async def sales_summary(
         after: str, before: str, status: str = "completed,processing", top: int = 10
     ) -> Json:
@@ -378,6 +466,10 @@ def _wc_errors_as_tool_errors(fn: ToolFn) -> ToolFn:
             raise ToolError(str(exc)) from exc
 
     return wrapper
+
+
+def _today() -> date:
+    return date.today()
 
 
 def _per_page(limit: int) -> int:
